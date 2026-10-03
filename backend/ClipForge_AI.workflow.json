@@ -1,0 +1,1950 @@
+{
+ "name": "ClipForge AI",
+ "nodes": [
+  {
+   "parameters": {
+    "updates": [
+     "message",
+     "callback_query"
+    ],
+    "additionalFields": {}
+   },
+   "id": "cffa4bdc-a1aa-416a-b20a-64f921c868c8",
+   "name": "Telegram Trigger",
+   "type": "n8n-nodes-base.telegramTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    0,
+    400
+   ],
+   "credentials": {
+    "telegramApi": {
+     "id": "",
+     "name": "Telegram account"
+    }
+   },
+   "webhookId": "1ac9a041-efd9-45e3-8538-41f715669a23"
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; \nconst u = $json;\nconst cb = u.callback_query, msg = u.message;\nlet o;\nif (cb) o = { kind: 'callback', chatId: String(cb.message.chat.id), cbData: cb.data, cbId: cb.id };\nelse if (msg && msg.voice) o = { kind: 'voice', chatId: String(msg.chat.id), fileId: msg.voice.file_id };\nelse if (msg && msg.text) o = { kind: 'text', chatId: String(msg.chat.id), text: msg.text };\nelse o = { kind: 'ignore' };\nconst allowed = $env.ALLOWED_CHAT_ID;  // optional safety: only YOU can use the bot\nif (allowed && o.chatId && o.chatId !== String(allowed)) o = { kind: 'ignore' };\nreturn [{ json: o }];"
+   },
+   "id": "3e62c876-40bc-4b08-97fd-5095a02a9b90",
+   "name": "Normalize",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    220,
+    400
+   ]
+  },
+  {
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "4af752e5-cf5a-4060-8967-cfbdcf89f90e",
+       "leftValue": "={{ $json.kind }}",
+       "rightValue": "voice",
+       "operator": {
+        "type": "string",
+        "operation": "equals"
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "5f82f4a9-060d-45fc-a974-ece02d54d0c3",
+   "name": "Is Voice Note?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    440,
+    400
+   ]
+  },
+  {
+   "parameters": {
+    "resource": "file",
+    "fileId": "={{ $json.fileId }}"
+   },
+   "id": "c8341a80-c8b9-4e03-ba91-95d8dd51a846",
+   "name": "Get Voice File",
+   "type": "n8n-nodes-base.telegram",
+   "typeVersion": 1.2,
+   "position": [
+    660,
+    280
+   ],
+   "credentials": {
+    "telegramApi": {
+     "id": "",
+     "name": "Telegram account"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Authorization",
+       "value": "=Bearer {{ $env.GROQ_API_KEY }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "contentType": "multipart-form-data",
+    "bodyParameters": {
+     "parameters": [
+      {
+       "parameterType": "formBinaryData",
+       "name": "file",
+       "inputDataFieldName": "data"
+      },
+      {
+       "name": "model",
+       "value": "whisper-large-v3-turbo"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "id": "0371ae46-7fe3-4984-a7dd-614119512e06",
+   "name": "Groq Whisper (free)",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    880,
+    280
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const n = $('Normalize').first().json;\nreturn [{ json: { kind: 'text', chatId: n.chatId, text: $json.text || '' } }];"
+   },
+   "id": "b0e61223-d291-4367-bfde-f010f70ef385",
+   "name": "Voice to Text",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1100,
+    280
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst j = $json, chatId = j.chatId;\nconst reply = (text) => ({ chat_id: chatId, text });\nconst out = { chatId, cbId: j.cbId || null, route: 'reply' };\nif (j.kind === 'ignore') return [{ json: { route: 'ignore' } }];\n\nif (j.kind === 'callback') {\n  const [t, runId, arg] = String(j.cbData).split('|');\n  const run = sd.runs[runId];\n  if (!run) { out.tg = reply('⚠️ That session expired. Send me a new topic and I will start over.'); return [{ json: out }]; }\n  out.runId = runId;\n  if (t === 'a') { const a = run.angles[Number(arg)]; out.route = 'pick_angle'; out.angle = a.title + ' — ' + a.hook; }\n  else if (t === 'c') { sd.pending[chatId] = { runId, awaiting: 'angle' }; out.tg = reply('✍️ Send your own angle now (text or voice note).'); }\n  else if (t === 'h') { out.route = 'hook_ok'; out.hook = arg; }\n  else if (t === 'r') { out.route = 'rewrite'; }\n  else if (t === 'p' && arg === 'yt') { out.route = 'publish'; }\n  else if (t === 'p') { out.tg = reply('👍 Saved! The video stays on your server in /data/clipforge/runs/' + runId + '/final.mp4'); }\n  else if (t === 'x') { delete sd.runs[runId]; out.tg = reply('🗑️ Cancelled. Send a new topic any time.'); }\n  else { out.tg = reply('🤔 Unknown button.'); }\n  return [{ json: out }];\n}\n\nconst text = String(j.text || '').trim();\nconst pend = sd.pending[chatId];\nif (/^\\/(start|help)/i.test(text)) {\n  out.tg = reply('🎬 ClipForge AI\\n\\nSend me a topic (text or voice note) like:\\n\"Make a short about why the Mariana Trench has never been fully explored\"\\n\\nI will research it, pitch angles, show a storyboard, and only render after you approve.');\n} else if (pend && pend.awaiting === 'angle') {\n  delete sd.pending[chatId];\n  out.route = 'pick_angle'; out.runId = pend.runId; out.angle = text;\n} else if (text.length < 4) {\n  out.tg = reply('Send me a topic to make a Short about 🙂');\n} else {\n  out.route = 'new_topic'; out.topic = text;\n}\nreturn [{ json: out }];"
+   },
+   "id": "b9119138-bef8-4e68-b0a9-5c28ddd896f4",
+   "name": "Decide",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1320,
+    400
+   ]
+  },
+  {
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "loose",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "954b7bf9-02bf-43ac-b327-472157e91ead",
+       "leftValue": "={{ $json.cbId }}",
+       "operator": {
+        "type": "string",
+        "operation": "notEmpty",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "7b92618c-1446-43a0-996a-cf0a1efe18cc",
+   "name": "Has Callback?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    1540,
+    160
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/answerCallbackQuery",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ callback_query_id: $json.cbId }) }}",
+    "options": {}
+   },
+   "id": "01432685-b263-4fd2-af26-2533f0424260",
+   "name": "Ack Tap",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    1760,
+    160
+   ],
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "rules": {
+     "values": [
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict",
+         "version": 2
+        },
+        "conditions": [
+         {
+          "id": "5bc3d196-3fda-4962-bc8b-5e0a1eeb0b09",
+          "leftValue": "={{ $json.route }}",
+          "rightValue": "reply",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "reply"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict",
+         "version": 2
+        },
+        "conditions": [
+         {
+          "id": "7e2d1e57-7c86-48d5-83f2-97d2f997bd7f",
+          "leftValue": "={{ $json.route }}",
+          "rightValue": "new_topic",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "new_topic"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict",
+         "version": 2
+        },
+        "conditions": [
+         {
+          "id": "94a5fe3a-a380-40d1-afe2-944b36704499",
+          "leftValue": "={{ $json.route }}",
+          "rightValue": "pick_angle",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "pick_angle"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict",
+         "version": 2
+        },
+        "conditions": [
+         {
+          "id": "e32d0e58-322d-45a6-b3c7-75e3953c1d05",
+          "leftValue": "={{ $json.route }}",
+          "rightValue": "hook_ok",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "hook_ok"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict",
+         "version": 2
+        },
+        "conditions": [
+         {
+          "id": "0aa62904-8c85-4469-8ff0-dfee44ecb8ef",
+          "leftValue": "={{ $json.route }}",
+          "rightValue": "rewrite",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "rewrite"
+      },
+      {
+       "conditions": {
+        "options": {
+         "caseSensitive": true,
+         "leftValue": "",
+         "typeValidation": "strict",
+         "version": 2
+        },
+        "conditions": [
+         {
+          "id": "8eba7416-969a-4ea2-85a2-9954d4fc7a85",
+          "leftValue": "={{ $json.route }}",
+          "rightValue": "publish",
+          "operator": {
+           "type": "string",
+           "operation": "equals"
+          }
+         }
+        ],
+        "combinator": "and"
+       },
+       "renameOutput": true,
+       "outputKey": "publish"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "id": "caf00502-9842-499f-8465-aaa0ccab6ce5",
+   "name": "Route",
+   "type": "n8n-nodes-base.switch",
+   "typeVersion": 3.2,
+   "position": [
+    1540,
+    460
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Decide').first().json.tg) }}",
+    "options": {}
+   },
+   "id": "30ff416b-217e-40b7-a496-6f5197c0c1a2",
+   "name": "Send Reply",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    1800,
+    300
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst TONE = $env.CREATOR_TONE || 'curious, confident, conversational, like a smart friend'; const LANG = $env.VIDEO_LANGUAGE || 'English'; const STYLE = $env.VISUAL_STYLE || 'cinematic, photorealistic, dramatic lighting, high detail';\nconst d = $('Decide').first().json;\nconst runId = Date.now().toString(36);\nsd.runs[runId] = { chatId: d.chatId, topic: d.topic, created: new Date().toISOString() };\nconst ids = Object.keys(sd.runs).sort(); while (ids.length > 25) delete sd.runs[ids.shift()];   // keep memory small\nconst prompt = `You are an executive producer for a viral educational YouTube Shorts channel. Voice: ${TONE}. Language: ${LANG}.\nThe creator wants a 45-second Short about: \"${d.topic}\".\nReturn ONLY JSON: {\"producer_notes\": \"2 sentences: who this is for + the single sharpest question you would ask the creator\", \"angles\": [ {\"title\": \"max 6 words\", \"hook\": \"the opening line, max 14 words\", \"why\": \"max 14 words on why it will hold attention\"}, ... ]}\nExactly 3 angles: (1) a contrarian take that challenges what people believe, (2) an escalating story / countdown, (3) a mystery or curiosity-gap. Be specific to the topic, never generic.`;\nreturn [{ json: { runId, chatId: d.chatId, tg: { chat_id: d.chatId, text: `🎬 Topic received: \"${d.topic}\"\\n\\n🧠 Your producer is brainstorming angles...` },\n  gem: { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.9 } } } }];"
+   },
+   "id": "26a51f87-761a-4a4e-a2d7-4804e579cb64",
+   "name": "Prep Topic",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2040,
+    520
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Prep Topic').first().json.tg) }}",
+    "options": {}
+   },
+   "id": "fb2c7b39-6c23-439e-be64-4ce5e722f7ea",
+   "name": "Send: Brainstorming",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2260,
+    520
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $env.GEMINI_MODEL || 'gemini-2.5-flash' }}:generateContent",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "x-goog-api-key",
+       "value": "={{ $env.GEMINI_API_KEY }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Prep Topic').first().json.gem) }}",
+    "options": {
+     "timeout": 180000
+    }
+   },
+   "id": "99ce1581-cb89-4f46-9618-916608942f5a",
+   "name": "Gemini: Angles",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2480,
+    520
+   ],
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 8000
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst getText = (r) => (r.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');\nconst parseJson = (s) => JSON.parse(s.replace(/^```json\\s*|^```\\s*|```\\s*$/gm, '').trim());\nconst p = $('Prep Topic').first().json; const run = sd.runs[p.runId];\nconst data = parseJson(getText($input.first().json));\nconst angles = (data.angles || []).slice(0, 3);\nif (!angles.length) throw new Error('Gemini returned no angles');\nrun.angles = angles;\nconst lines = angles.map((a, i) => `${i + 1}️⃣ ${a.title}\\n   🪝 ${a.hook}\\n   💡 ${a.why}`);\nconst text = [`🎬 Topic: ${run.topic}`, '', `🧠 Producer notes: ${data.producer_notes}`, '', ...lines, '', '✅ GATE 1 of 3 — pick an angle, or write your own 👇'].join('\\n');\nreturn [{ json: { tg: { chat_id: p.chatId, text, reply_markup: { inline_keyboard: [\n  angles.map((a, i) => ({ text: `${i + 1}️⃣`, callback_data: `a|${p.runId}|${i}` })),\n  [{ text: '✍️ Custom angle', callback_data: `c|${p.runId}` }],\n  [{ text: '❌ Cancel', callback_data: `x|${p.runId}` }] ] } } } }];"
+   },
+   "id": "5263425d-7029-4f47-b1d0-38743330e47b",
+   "name": "Parse Angles",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2700,
+    520
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.tg) }}",
+    "options": {}
+   },
+   "id": "979a8a3e-baff-41d7-a4fc-4f032a9fba80",
+   "name": "Send: Angles",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2920,
+    520
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst d = $('Decide').first().json; const run = sd.runs[d.runId]; run.angle = d.angle;\nconst prompt = `Research this for a 45-second expert-level YouTube Short.\nTOPIC: ${run.topic}\nANGLE: ${d.angle}\nUse live web search. Return 12-15 bullet facts. Each bullet must contain a specific number, date, name or quote AND the source name (journal, .gov/.edu, or reputable outlet). Include 2 counter-intuitive facts and 1 common misconception people believe. Plain text, no intro, no fluff. If you cannot verify something, leave it out.`;\nreturn [{ json: { tg: { chat_id: d.chatId, text: `🔒 Angle locked:\\n${d.angle}\\n\\n🔎 Researching with live web search... (about 1 minute)` },\n  gem: { contents: [{ role: 'user', parts: [{ text: prompt }] }], tools: [{ google_search: {} }], generationConfig: { temperature: 0.3 } } } }];"
+   },
+   "id": "aad66c91-4dfd-4c44-aa8b-bfb48923fc88",
+   "name": "Prep Research",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1800,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Prep Research').first().json.tg) }}",
+    "options": {}
+   },
+   "id": "45724e82-55e5-47a5-96cb-704b96cbaa67",
+   "name": "Send: Researching",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2020,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $env.GEMINI_MODEL || 'gemini-2.5-flash' }}:generateContent",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "x-goog-api-key",
+       "value": "={{ $env.GEMINI_API_KEY }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Prep Research').first().json.gem) }}",
+    "options": {
+     "timeout": 180000
+    }
+   },
+   "id": "6575cb0f-7e1f-4564-a426-356f94f0695a",
+   "name": "Gemini: Research (web)",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2240,
+    760
+   ],
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 8000
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst getText = (r) => (r.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');\nconst parseJson = (s) => JSON.parse(s.replace(/^```json\\s*|^```\\s*|```\\s*$/gm, '').trim());\nconst d = $('Decide').first().json; const run = sd.runs[d.runId];\nconst r = $input.first().json; const text = getText(r);\nif (!text) throw new Error('Research came back empty: ' + JSON.stringify(r).slice(0, 300));\nconst chunks = r.candidates?.[0]?.groundingMetadata?.groundingChunks || [];\nconst seen = new Set(); const sources = [];\nfor (const c of chunks) { const w = c.web; if (w && !seen.has(w.title)) { seen.add(w.title); sources.push({ title: w.title, uri: w.uri }); } }\nrun.research = text; run.sources = sources;\nreturn [{ json: { runId: d.runId, sources: sources.length } }];"
+   },
+   "id": "472b5641-7b46-4423-a1e3-d7603491d94b",
+   "name": "Parse Research",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2460,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst d = $('Decide').first().json; \nreturn [{ json: { tg: { chat_id: d.chatId, text: '🔄 Rewriting the script with a fresh structure and new hooks...' } } }];"
+   },
+   "id": "1e172b50-e66b-473c-8df8-374a8522dcbf",
+   "name": "Prep Rewrite",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1800,
+    980
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Prep Rewrite').first().json.tg) }}",
+    "options": {}
+   },
+   "id": "7cb16972-bfc9-49aa-b7b8-ec83ecaf268c",
+   "name": "Send: Rewriting",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2020,
+    980
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst TONE = $env.CREATOR_TONE || 'curious, confident, conversational, like a smart friend'; const LANG = $env.VIDEO_LANGUAGE || 'English'; const STYLE = $env.VISUAL_STYLE || 'cinematic, photorealistic, dramatic lighting, high detail';\nconst d = $('Decide').first().json; const run = sd.runs[d.runId];\nconst redo = d.route === 'rewrite' ? '\\nIMPORTANT: the creator REJECTED the previous draft. Use a completely different structure, different hooks and different scene order.' : '';\nconst prompt = `You are the head writer of a viral educational YouTube Shorts channel.\nCREATOR VOICE: ${TONE}. LANGUAGE: ${LANG}. VISUAL STYLE for images: ${STYLE}.\nTOPIC: ${run.topic}\nCHOSEN ANGLE: ${run.angle}\nVERIFIED RESEARCH NOTES (the ONLY source of facts. Never invent numbers, names or quotes):\n${run.research}\n\nWrite a 40-50 second script (about 110-130 spoken words) with EXACTLY 10 scenes.\n- Scene 1 = HOOK (max 14 words) that stops the scroll. Give two alternatives: hook_a (curiosity gap) and hook_b (contrarian / shocking). scenes[0].narration = hook_a.\n- Scenes 2-4 escalate, one surprising fact each. Scenes 5-8 rapid delivery with concrete numbers. Scene 9 = payoff / twist.\n- Scene 10 = LOOP ENDING: its last words must end mid-thought so they flow grammatically into the first words of the hook (like \"...and that is exactly why\"). Give close_a (flows into hook_a) and close_b (flows into hook_b). scenes[9].narration = close_a.\n- Each narration: 8-14 words, short punchy sentences, conversational. Use \"...\" right before big reveals.\n- Every claim must come from the research notes.\n- visual_prompt: vertical 9:16 cinematic image description: concrete subject, camera angle, lighting. NO text or letters in the image. Vary the camera angle every scene.\n- keyword: 1-3 word ALL-CAPS on-screen emphasis (or empty string).\n- title: max 70 chars, no hashtags. description: 2 short lines. tags: 5-8.${redo}\nReturn ONLY JSON: {\"title\":\"\",\"description\":\"\",\"tags\":[],\"hook_a\":\"\",\"hook_b\":\"\",\"close_a\":\"\",\"close_b\":\"\",\"scenes\":[{\"idx\":1,\"narration\":\"\",\"visual_prompt\":\"\",\"keyword\":\"\"}]}`;\nreturn [{ json: { gem: { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.8 } } } }];"
+   },
+   "id": "2f82ccb3-2ec2-40d7-a745-7c081ee94197",
+   "name": "Build Script Prompt",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2900,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $env.GEMINI_MODEL || 'gemini-2.5-flash' }}:generateContent",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "x-goog-api-key",
+       "value": "={{ $env.GEMINI_API_KEY }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Build Script Prompt').first().json.gem) }}",
+    "options": {
+     "timeout": 180000
+    }
+   },
+   "id": "22ae102b-92d2-45be-a41d-4cf6add305ce",
+   "name": "Gemini: Script",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    3120,
+    760
+   ],
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 8000
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst getText = (r) => (r.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');\nconst parseJson = (s) => JSON.parse(s.replace(/^```json\\s*|^```\\s*|```\\s*$/gm, '').trim());\nconst d = $('Decide').first().json; const run = sd.runs[d.runId];\nconst s = parseJson(getText($input.first().json));\nif (!Array.isArray(s.scenes) || s.scenes.length < 6) throw new Error('Script has too few scenes');\ns.scenes.forEach((sc, i) => { sc.idx = i + 1; sc.keyword = sc.keyword || ''; sc.visual_prompt = String(sc.visual_prompt || '').slice(0, 400); });\ns.scenes[0].narration = s.hook_a; s.scenes[s.scenes.length - 1].narration = s.close_a;\nrun.script = s;\nconst prompt = `You are a ruthless fact-checker. Compare the SCRIPT against the RESEARCH NOTES.\nFlag every factual claim in the script that is NOT directly supported by the notes (numbers, dates, names, causal claims).\nRESEARCH NOTES:\\n${run.research}\\n\\nSCRIPT:\\n${s.scenes.map(x => x.idx + '. ' + x.narration).join('\\n')}\\n${s.hook_b}\\n${s.close_b}\nReturn ONLY JSON: {\"verdict\":\"pass\" or \"warn\",\"issues\":[{\"scene\":1,\"claim\":\"\",\"problem\":\"\"}]}`;\nreturn [{ json: { gem: { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.1 } } } }];"
+   },
+   "id": "a6f4c20d-61c7-4fa7-aaec-490f737bea50",
+   "name": "Parse Script",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3340,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $env.GEMINI_MODEL || 'gemini-2.5-flash' }}:generateContent",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "x-goog-api-key",
+       "value": "={{ $env.GEMINI_API_KEY }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Parse Script').first().json.gem) }}",
+    "options": {
+     "timeout": 180000
+    }
+   },
+   "id": "ae389caf-ad6b-43ad-a644-e52e08a50c8b",
+   "name": "Gemini: Fact-check",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    3560,
+    760
+   ],
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 8000
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst getText = (r) => (r.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');\nconst parseJson = (s) => JSON.parse(s.replace(/^```json\\s*|^```\\s*|```\\s*$/gm, '').trim());\nconst d = $('Decide').first().json; const run = sd.runs[d.runId];\nlet fc; try { fc = parseJson(getText($input.first().json)); } catch (e) { fc = { verdict: 'warn', issues: [{ scene: 0, claim: 'fact-check parse failed', problem: 'review manually' }] }; }\nrun.factcheck = fc; return [{ json: { runId: d.runId } }];"
+   },
+   "id": "1334d575-5f98-43ec-8b2f-0d58bc1bdd45",
+   "name": "Parse Fact-check",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3780,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "command": "=mkdir -p /data/clipforge/runs/{{ $json.runId }} && rm -f /data/clipforge/runs/{{ $json.runId }}/img_*.jpg /data/clipforge/runs/{{ $json.runId }}/sheet.jpg"
+   },
+   "id": "6ec703df-f618-4b71-bb04-a4a719a2b82d",
+   "name": "Make Run Folder",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "position": [
+    4000,
+    760
+   ],
+   "executeOnce": true
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst TONE = $env.CREATOR_TONE || 'curious, confident, conversational, like a smart friend'; const LANG = $env.VIDEO_LANGUAGE || 'English'; const STYLE = $env.VISUAL_STYLE || 'cinematic, photorealistic, dramatic lighting, high detail';\nconst d = $('Decide').first().json; const run = sd.runs[d.runId];\nreturn run.script.scenes.map((s, i) => ({ json: { runId: d.runId, idx: i + 1, seed: 1000 + i * 7,\n  prompt: (s.visual_prompt + ', ' + STYLE + ', vertical 9:16, no text, no watermark').slice(0, 450) } }));"
+   },
+   "id": "ecb71dd9-c195-4498-af84-a54dbbd4241f",
+   "name": "Split Scenes (Images)",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    4220,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "method": "GET",
+    "url": "=https://image.pollinations.ai/prompt/{{ encodeURIComponent($json.prompt) }}",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "width",
+       "value": "720"
+      },
+      {
+       "name": "height",
+       "value": "1280"
+      },
+      {
+       "name": "seed",
+       "value": "={{ $json.seed }}"
+      },
+      {
+       "name": "model",
+       "value": "flux"
+      },
+      {
+       "name": "nologo",
+       "value": "true"
+      }
+     ]
+    },
+    "options": {
+     "timeout": 180000,
+     "batching": {
+      "batch": {
+       "batchSize": 1,
+       "batchInterval": 16000
+      }
+     },
+     "response": {
+      "response": {
+       "responseFormat": "file"
+      }
+     }
+    }
+   },
+   "id": "e5126bd5-8a54-41eb-9d61-495d03b965ea",
+   "name": "Pollinations Image (free)",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    4440,
+    760
+   ],
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 20000
+  },
+  {
+   "parameters": {
+    "operation": "write",
+    "fileName": "=/data/clipforge/runs/{{ $('Split Scenes (Images)').item.json.runId }}/img_{{ $('Split Scenes (Images)').item.json.idx }}.jpg",
+    "dataPropertyName": "data",
+    "options": {}
+   },
+   "id": "3ddc0dcf-1fc7-4aeb-8f00-6551502a77b7",
+   "name": "Write Image",
+   "type": "n8n-nodes-base.readWriteFile",
+   "typeVersion": 1,
+   "position": [
+    4660,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "command": "=python3 /data/clipforge/bin/render.py sheet {{ $('Decide').first().json.runId }}"
+   },
+   "id": "2385cf3c-2754-4eee-ac96-1cd4c0c5020c",
+   "name": "Make Contact Sheet",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "position": [
+    4880,
+    760
+   ],
+   "executeOnce": true
+  },
+  {
+   "parameters": {
+    "operation": "read",
+    "fileSelector": "=/data/clipforge/runs/{{ $('Decide').first().json.runId }}/sheet.jpg",
+    "options": {}
+   },
+   "id": "623d5d82-9baf-48d5-b1af-98efe321ca4f",
+   "name": "Read Sheet",
+   "type": "n8n-nodes-base.readWriteFile",
+   "typeVersion": 1,
+   "position": [
+    5100,
+    760
+   ],
+   "executeOnce": true
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendPhoto",
+    "sendBody": true,
+    "contentType": "multipart-form-data",
+    "bodyParameters": {
+     "parameters": [
+      {
+       "name": "chat_id",
+       "value": "={{ $('Decide').first().json.chatId }}"
+      },
+      {
+       "name": "caption",
+       "value": "🖼️ Storyboard — 10 free AI frames. Nothing paid has been rendered yet."
+      },
+      {
+       "parameterType": "formBinaryData",
+       "name": "photo",
+       "inputDataFieldName": "data"
+      }
+     ]
+    },
+    "options": {
+     "timeout": 120000
+    }
+   },
+   "id": "d8edfc8d-a883-45fd-8815-762f997a990a",
+   "name": "Send: Storyboard Sheet",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    5320,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst d = $('Decide').first().json; const run = sd.runs[d.runId]; const s = run.script; const fc = run.factcheck || {};\nconst issues = (fc.issues || []).slice(0, 4).map(i => `• scene ${i.scene}: ${i.problem}`).join('\\n');\nconst src = (run.sources || []).slice(0, 4).map(x => x.title).join(', ');\nlet text = [`📝 ${s.title}`, '', `🅰️ Hook A: ${s.hook_a}`, `🅱️ Hook B: ${s.hook_b}`, '', ...s.scenes.slice(1, 9).map(x => `${x.idx}. ${x.narration}`), '',\n  fc.verdict === 'pass' ? '✅ Fact-check: every claim matches the research.' : `⚠️ Fact-check flagged:\\n${issues || 'review manually'}`,\n  src ? `📚 Sources: ${src}` : '', '', '✅ GATE 2 of 3 — choose your hook (this also locks the script):'].filter(x => x !== null).join('\\n');\nif (text.length > 3900) text = text.slice(0, 3900) + '…';\nreturn [{ json: { tg: { chat_id: d.chatId, text, reply_markup: { inline_keyboard: [\n  [{ text: '🅰️ Use Hook A', callback_data: `h|${d.runId}|a` }, { text: '🅱️ Use Hook B', callback_data: `h|${d.runId}|b` }],\n  [{ text: '🔄 Rewrite script', callback_data: `r|${d.runId}` }], [{ text: '❌ Cancel', callback_data: `x|${d.runId}` }] ] } } } }];"
+   },
+   "id": "9576f864-6a3b-4f04-8da5-f6098cee9183",
+   "name": "Build Storyboard Msg",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    5540,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.tg) }}",
+    "options": {}
+   },
+   "id": "f9cb44d5-118a-4726-a6c2-d438dc8120c1",
+   "name": "Send: Storyboard Gate",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    5760,
+    760
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst d = $('Decide').first().json; const run = sd.runs[d.runId]; const s = run.script;\nconst sc = JSON.parse(JSON.stringify(s.scenes)); const b = d.hook === 'b';\nsc[0].narration = b ? s.hook_b : s.hook_a; sc[sc.length - 1].narration = b ? s.close_b : s.close_a;\nrun.final_scenes = sc; run.hook = d.hook; run.status = 'rendering';\nconst b64 = Buffer.from(JSON.stringify({ scenes: sc.map((x, i) => ({ idx: i + 1, narration: x.narration, keyword: x.keyword || '' })) })).toString('base64');\nreturn [{ json: { runId: d.runId, b64, tg: { chat_id: d.chatId, text: `🎙️ Hook ${b ? 'B' : 'A'} locked.\\nRecording the voiceover with ElevenLabs and editing your video... (about 2-4 minutes)` } } }];"
+   },
+   "id": "b1831eb1-6738-4403-97b8-87817f4a90ef",
+   "name": "Prep Render",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1800,
+    1260
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Prep Render').first().json.tg) }}",
+    "options": {}
+   },
+   "id": "e79ec85c-b58d-4e8a-bcf5-1e3b0ff7e1d6",
+   "name": "Send: Rendering",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2020,
+    1260
+   ]
+  },
+  {
+   "parameters": {
+    "command": "=echo '{{ $('Prep Render').first().json.b64 }}' | base64 -d > /data/clipforge/runs/{{ $('Prep Render').first().json.runId }}/scenes.json"
+   },
+   "id": "2d750220-3bfd-402c-94a8-253639887c91",
+   "name": "Write Scenes JSON",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "position": [
+    2240,
+    1260
+   ],
+   "executeOnce": true
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst d = $('Decide').first().json; const run = sd.runs[d.runId];\nreturn run.final_scenes.map((s, i) => ({ json: { runId: d.runId, idx: i + 1, text: s.narration } }));"
+   },
+   "id": "ecbd5aee-c9e8-4cd2-94a6-bfc3e75a9b06",
+   "name": "Split Scenes (Voice)",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2460,
+    1260
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.elevenlabs.io/v1/text-to-speech/{{ $env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM' }}",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "output_format",
+       "value": "mp3_44100_128"
+      }
+     ]
+    },
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "xi-api-key",
+       "value": "={{ $env.ELEVENLABS_API_KEY }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ text: $json.text, model_id: $env.ELEVENLABS_MODEL || 'eleven_multilingual_v2', voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true } }) }}",
+    "options": {
+     "timeout": 120000,
+     "batching": {
+      "batch": {
+       "batchSize": 1,
+       "batchInterval": 600
+      }
+     },
+     "response": {
+      "response": {
+       "responseFormat": "file"
+      }
+     }
+    }
+   },
+   "id": "84fa4e9f-c000-4fe2-b29f-73141d9f6d89",
+   "name": "ElevenLabs TTS",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2680,
+    1260
+   ],
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 6000
+  },
+  {
+   "parameters": {
+    "operation": "write",
+    "fileName": "=/data/clipforge/runs/{{ $('Split Scenes (Voice)').item.json.runId }}/audio_{{ $('Split Scenes (Voice)').item.json.idx }}.mp3",
+    "dataPropertyName": "data",
+    "options": {}
+   },
+   "id": "07a293a3-0424-450a-8e95-38edbba0f8a0",
+   "name": "Write Audio",
+   "type": "n8n-nodes-base.readWriteFile",
+   "typeVersion": 1,
+   "position": [
+    2900,
+    1260
+   ]
+  },
+  {
+   "parameters": {
+    "command": "=python3 /data/clipforge/bin/render.py render {{ $('Decide').first().json.runId }}"
+   },
+   "id": "2c8359a4-7598-471f-a35e-60fb86088ae0",
+   "name": "Render Video (ffmpeg)",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "position": [
+    3120,
+    1260
+   ],
+   "executeOnce": true
+  },
+  {
+   "parameters": {
+    "operation": "read",
+    "fileSelector": "=/data/clipforge/runs/{{ $('Decide').first().json.runId }}/final.mp4",
+    "options": {}
+   },
+   "id": "7eb91b81-0ece-41b9-a4f3-75dd8c30861d",
+   "name": "Read Final Video",
+   "type": "n8n-nodes-base.readWriteFile",
+   "typeVersion": 1,
+   "position": [
+    3340,
+    1260
+   ],
+   "executeOnce": true
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendVideo",
+    "sendBody": true,
+    "contentType": "multipart-form-data",
+    "bodyParameters": {
+     "parameters": [
+      {
+       "name": "chat_id",
+       "value": "={{ $('Decide').first().json.chatId }}"
+      },
+      {
+       "name": "caption",
+       "value": "🎉 Your Short is ready!\n\n✅ GATE 3 of 3 — happy with it? Publish or keep it."
+      },
+      {
+       "name": "width",
+       "value": "1080"
+      },
+      {
+       "name": "height",
+       "value": "1920"
+      },
+      {
+       "name": "supports_streaming",
+       "value": "true"
+      },
+      {
+       "name": "reply_markup",
+       "value": "={{ JSON.stringify({ inline_keyboard: [[{ text: '🚀 Upload to YouTube', callback_data: 'p|' + $('Decide').first().json.runId + '|yt' }], [{ text: '💾 Keep it (don\\'t upload)', callback_data: 'p|' + $('Decide').first().json.runId + '|skip' }]] }) }}"
+      },
+      {
+       "parameterType": "formBinaryData",
+       "name": "video",
+       "inputDataFieldName": "data"
+      }
+     ]
+    },
+    "options": {
+     "timeout": 180000
+    }
+   },
+   "id": "fa771fee-b802-4515-a122-a3a9f35b54e6",
+   "name": "Send: Final Video",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    3560,
+    1260
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const sd = $getWorkflowStaticData('global'); sd.runs = sd.runs || {}; sd.pending = sd.pending || {};\nconst d = $('Decide').first().json; const run = sd.runs[d.runId]; const s = run.script;\nconst srcs = (run.sources || []).slice(0, 5).map(x => x.title).join(', ');\nconst desc = [s.description, srcs ? '\\nSources: ' + srcs : '', '\\n#Shorts'].join('\\n');\nreturn [{ json: { yt: { title: (s.title + ' #Shorts').slice(0, 100), description: desc, tags: (s.tags || []).join(',') },\n  tg: { chat_id: d.chatId, text: '⬆️ Uploading to YouTube...' } } }];"
+   },
+   "id": "c94239a5-9dd9-4232-8d55-b43300119348",
+   "name": "Prep Publish",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1800,
+    1700
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Prep Publish').first().json.tg) }}",
+    "options": {}
+   },
+   "id": "1003df34-30e0-49d0-ae89-e2febb35b1d0",
+   "name": "Send: Uploading",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2020,
+    1700
+   ]
+  },
+  {
+   "parameters": {
+    "operation": "read",
+    "fileSelector": "=/data/clipforge/runs/{{ $('Decide').first().json.runId }}/final.mp4",
+    "options": {}
+   },
+   "id": "7450bf17-5c6e-4681-90bd-aeb25d51d844",
+   "name": "Read Video for Upload",
+   "type": "n8n-nodes-base.readWriteFile",
+   "typeVersion": 1,
+   "position": [
+    2240,
+    1700
+   ],
+   "executeOnce": true
+  },
+  {
+   "parameters": {
+    "resource": "video",
+    "operation": "upload",
+    "title": "={{ $('Prep Publish').first().json.yt.title }}",
+    "regionCode": "US",
+    "categoryId": "27",
+    "binaryProperty": "data",
+    "options": {
+     "description": "={{ $('Prep Publish').first().json.yt.description }}",
+     "tags": "={{ $('Prep Publish').first().json.yt.tags }}",
+     "privacyStatus": "private",
+     "selfDeclaredMadeForKids": false
+    }
+   },
+   "id": "b3e559af-27ba-4a74-9dc2-77ba227e3738",
+   "name": "YouTube Upload",
+   "type": "n8n-nodes-base.youTube",
+   "typeVersion": 1,
+   "position": [
+    2460,
+    1700
+   ],
+   "credentials": {
+    "youTubeOAuth2Api": {
+     "id": "",
+     "name": "YouTube account"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "jsCode": "const yt = $input.first().json; const url = 'https://www.youtube.com/shorts/' + yt.id;\nconst chatId = $('Decide').first().json.chatId; const title = $('Prep Publish').first().json.yt.title;\nreturn [{ json: { url, title, tg: { chat_id: chatId, text: `✅ Uploaded as PRIVATE (change visibility in YouTube Studio):\\n${url}\\n\\nWant another? Just send a new topic 🎬` } } }];"
+   },
+   "id": "f27ea76e-092f-4d31-a4dd-ee9a92e61582",
+   "name": "Build Done Message",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2680,
+    1700
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.tg) }}",
+    "options": {}
+   },
+   "id": "c6466e1b-54a2-4058-8c7d-6e75c9daa98b",
+   "name": "Send: Done",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2900,
+    1620
+   ]
+  },
+  {
+   "parameters": {
+    "fromEmail": "={{ $env.EMAIL_FROM }}",
+    "toEmail": "={{ $env.EMAIL_TO }}",
+    "subject": "=✅ ClipForge: your Short is uploaded",
+    "emailFormat": "text",
+    "text": "=Your video \"{{ $json.title }}\" was uploaded successfully.\n\nLink: {{ $json.url }}\n\n— ClipForge AI",
+    "options": {}
+   },
+   "id": "06b93c5a-f529-4a44-8a14-d65e9d2d55fb",
+   "name": "Email: Upload Success",
+   "type": "n8n-nodes-base.emailSend",
+   "typeVersion": 2.1,
+   "position": [
+    2900,
+    1800
+   ],
+   "credentials": {
+    "smtp": {
+     "id": "",
+     "name": "SMTP account"
+    }
+   },
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {},
+   "id": "23c79351-0ad4-408b-9808-6fd336aad654",
+   "name": "Error Trigger",
+   "type": "n8n-nodes-base.errorTrigger",
+   "typeVersion": 1,
+   "position": [
+    1800,
+    2000
+   ]
+  },
+  {
+   "parameters": {
+    "jsCode": "const e = $json; return [{ json: { tg: { chat_id: $env.ALLOWED_CHAT_ID, text: `🚨 ClipForge error\\nWorkflow: ${e.workflow?.name}\\nFailing node: ${e.execution?.lastNodeExecuted}\\nMessage: ${e.execution?.error?.message}\\nExecution: ${e.execution?.url}` } } }];"
+   },
+   "id": "df69ef4d-db50-4129-84ae-cdb96de9a5d5",
+   "name": "Format Error",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2020,
+    2000
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.tg) }}",
+    "options": {}
+   },
+   "id": "a8c0e5a9-de4c-42a7-bbbe-33f39cd3a767",
+   "name": "Send: Error Alert",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2240,
+    2000
+   ]
+  },
+  {
+   "parameters": {
+    "content": "## 1️⃣ Entry\nTelegram → (voice? Whisper) → Decide → Route\n`Decide` is the brain: it reads button taps / text and keeps each run's state.",
+    "width": 1280,
+    "height": 220,
+    "color": 6
+   },
+   "id": "4bdccde5-9e21-48a4-8af8-48fb69f2a0d5",
+   "name": "Note ## 1️⃣ Entry",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    -20,
+    560
+   ]
+  },
+  {
+   "parameters": {
+    "content": "## 🎬 GATE 1 — Angle\nGemini pitches 3 angles. You tap one or type your own.",
+    "width": 1100,
+    "height": 100,
+    "color": 4
+   },
+   "id": "31ee9d07-6de6-4fcf-94ed-3ee966b06bd1",
+   "name": "Note ## 🎬 GATE 1 — Angle",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    2020,
+    400
+   ]
+  },
+  {
+   "parameters": {
+    "content": "## 🔎 Research → Script → Fact-check → 🖼️ GATE 2 (storyboard)\nWeb-grounded research, 10-scene script with 2 hooks, fact-check pass, 10 free AI frames as a contact sheet.",
+    "width": 4200,
+    "height": 100,
+    "color": 5
+   },
+   "id": "72a1df23-d6ec-4644-9f91-aee6b2a79ab9",
+   "name": "Note ## 🔎 Research → Scri",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    1780,
+    640
+   ]
+  },
+  {
+   "parameters": {
+    "content": "## 🎙️ GATE 3 — Voice + Render + Preview\nElevenLabs voice per scene → ffmpeg edit (Ken Burns, word-by-word captions, ducked music) → video back to Telegram.",
+    "width": 2200,
+    "height": 100,
+    "color": 3
+   },
+   "id": "c2f476e2-b91e-4b1b-8d3e-1977a0e30a0a",
+   "name": "Note ## 🎙️ GATE 3 — Voice",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    1780,
+    1140
+   ]
+  },
+  {
+   "parameters": {
+    "content": "## 🚀 Publish\nYouTube upload + email notification.",
+    "width": 1300,
+    "height": 100,
+    "color": 2
+   },
+   "id": "42deb956-a8d3-4393-a3b5-c3cee4887976",
+   "name": "Note ## 🚀 Publish",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    1780,
+    1580
+   ]
+  },
+  {
+   "parameters": {
+    "content": "## 🚨 Error alerts\nIn workflow Settings → 'Error workflow' choose THIS workflow.",
+    "width": 800,
+    "height": 100,
+    "color": 7
+   },
+   "id": "07398e84-33ef-448d-83ce-db9364abe3f9",
+   "name": "Note ## 🚨 Error alerts",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    1780,
+    1880
+   ]
+  }
+ ],
+ "connections": {
+  "Telegram Trigger": {
+   "main": [
+    [
+     {
+      "node": "Normalize",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Normalize": {
+   "main": [
+    [
+     {
+      "node": "Is Voice Note?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is Voice Note?": {
+   "main": [
+    [
+     {
+      "node": "Get Voice File",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Decide",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Get Voice File": {
+   "main": [
+    [
+     {
+      "node": "Groq Whisper (free)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Groq Whisper (free)": {
+   "main": [
+    [
+     {
+      "node": "Voice to Text",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Voice to Text": {
+   "main": [
+    [
+     {
+      "node": "Decide",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Decide": {
+   "main": [
+    [
+     {
+      "node": "Has Callback?",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Route",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Has Callback?": {
+   "main": [
+    [
+     {
+      "node": "Ack Tap",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Route": {
+   "main": [
+    [
+     {
+      "node": "Send Reply",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prep Topic",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prep Research",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prep Render",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prep Rewrite",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Prep Publish",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prep Topic": {
+   "main": [
+    [
+     {
+      "node": "Send: Brainstorming",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send: Brainstorming": {
+   "main": [
+    [
+     {
+      "node": "Gemini: Angles",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Gemini: Angles": {
+   "main": [
+    [
+     {
+      "node": "Parse Angles",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Angles": {
+   "main": [
+    [
+     {
+      "node": "Send: Angles",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prep Research": {
+   "main": [
+    [
+     {
+      "node": "Send: Researching",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send: Researching": {
+   "main": [
+    [
+     {
+      "node": "Gemini: Research (web)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Gemini: Research (web)": {
+   "main": [
+    [
+     {
+      "node": "Parse Research",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Research": {
+   "main": [
+    [
+     {
+      "node": "Build Script Prompt",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Script Prompt": {
+   "main": [
+    [
+     {
+      "node": "Gemini: Script",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Gemini: Script": {
+   "main": [
+    [
+     {
+      "node": "Parse Script",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Script": {
+   "main": [
+    [
+     {
+      "node": "Gemini: Fact-check",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Gemini: Fact-check": {
+   "main": [
+    [
+     {
+      "node": "Parse Fact-check",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Parse Fact-check": {
+   "main": [
+    [
+     {
+      "node": "Make Run Folder",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Make Run Folder": {
+   "main": [
+    [
+     {
+      "node": "Split Scenes (Images)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Split Scenes (Images)": {
+   "main": [
+    [
+     {
+      "node": "Pollinations Image (free)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Pollinations Image (free)": {
+   "main": [
+    [
+     {
+      "node": "Write Image",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Write Image": {
+   "main": [
+    [
+     {
+      "node": "Make Contact Sheet",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Make Contact Sheet": {
+   "main": [
+    [
+     {
+      "node": "Read Sheet",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Sheet": {
+   "main": [
+    [
+     {
+      "node": "Send: Storyboard Sheet",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send: Storyboard Sheet": {
+   "main": [
+    [
+     {
+      "node": "Build Storyboard Msg",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Storyboard Msg": {
+   "main": [
+    [
+     {
+      "node": "Send: Storyboard Gate",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prep Rewrite": {
+   "main": [
+    [
+     {
+      "node": "Send: Rewriting",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send: Rewriting": {
+   "main": [
+    [
+     {
+      "node": "Build Script Prompt",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prep Render": {
+   "main": [
+    [
+     {
+      "node": "Send: Rendering",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send: Rendering": {
+   "main": [
+    [
+     {
+      "node": "Write Scenes JSON",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Write Scenes JSON": {
+   "main": [
+    [
+     {
+      "node": "Split Scenes (Voice)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Split Scenes (Voice)": {
+   "main": [
+    [
+     {
+      "node": "ElevenLabs TTS",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "ElevenLabs TTS": {
+   "main": [
+    [
+     {
+      "node": "Write Audio",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Write Audio": {
+   "main": [
+    [
+     {
+      "node": "Render Video (ffmpeg)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Render Video (ffmpeg)": {
+   "main": [
+    [
+     {
+      "node": "Read Final Video",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Final Video": {
+   "main": [
+    [
+     {
+      "node": "Send: Final Video",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prep Publish": {
+   "main": [
+    [
+     {
+      "node": "Send: Uploading",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send: Uploading": {
+   "main": [
+    [
+     {
+      "node": "Read Video for Upload",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Video for Upload": {
+   "main": [
+    [
+     {
+      "node": "YouTube Upload",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "YouTube Upload": {
+   "main": [
+    [
+     {
+      "node": "Build Done Message",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Done Message": {
+   "main": [
+    [
+     {
+      "node": "Send: Done",
+      "type": "main",
+      "index": 0
+     },
+     {
+      "node": "Email: Upload Success",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Error Trigger": {
+   "main": [
+    [
+     {
+      "node": "Format Error",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Format Error": {
+   "main": [
+    [
+     {
+      "node": "Send: Error Alert",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1"
+ },
+ "pinData": {},
+ "meta": {
+  "templateCredsSetupCompleted": false
+ },
+ "tags": []
+}

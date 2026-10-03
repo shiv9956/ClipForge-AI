@@ -1,0 +1,15 @@
+services:
+  n8n:
+    build: .
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    env_file:
+      - clipforge.env
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./clipforge:/data/clipforge
+ 
+volumes:
+  n8n_data:
