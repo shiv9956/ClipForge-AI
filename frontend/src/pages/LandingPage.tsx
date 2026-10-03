@@ -106,13 +106,14 @@ export const LandingPage: React.FC = () => {
 
           {/* Hero CTAs */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
-            <button
-              onClick={() => navigate('/create')}
+            <a
+              href="https://t.me/YOUR_BOT_USERNAME"
+              target="_blank" rel="noopener noreferrer"
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl font-extrabold text-base text-white bg-gradient-to-r from-crimson-600 via-crimson-500 to-rose-500 hover:from-crimson-500 hover:to-rose-400 active:scale-[0.98] shadow-lg shadow-crimson-900/40 hover:shadow-glow-crimson transition-all"
             >
               <span>Create Your First Video</span>
               <ArrowRight className="w-5 h-5" />
-            </button>
+            </a>
 
             <button
               onClick={() => navigate('/dashboard')}
@@ -400,13 +401,14 @@ export const LandingPage: React.FC = () => {
           Join professional creators, educators, and tech builders creating high-retention short videos with AI assistance.
         </p>
         <div className="pt-2">
-          <button
-            onClick={() => navigate('/create')}
+          <a
+            href="https://t.me/YOUR_BOT_USERNAME"
+            target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl font-extrabold text-base text-white bg-gradient-to-r from-crimson-600 to-rose-500 hover:from-crimson-500 hover:to-rose-400 shadow-glow-crimson transition-all"
           >
-            <span>Launch ClipForge Studio</span>
+            <span>Launch ClipForge on Telegram</span>
             <ArrowRight className="w-5 h-5" />
-          </button>
+          </a>
         </div>
       </section>
 
