@@ -64,7 +64,7 @@ export const LandingPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/login')}>
               Sign In
             </Button>
             <Button variant="primary" size="sm" onClick={() => navigate('/dashboard')} rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>

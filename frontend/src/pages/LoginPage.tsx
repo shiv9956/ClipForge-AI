@@ -25,7 +25,7 @@ export const LoginPage: React.FC = () => {
     try {
       await login(email, password);
       showToast({ type: 'success', title: 'Welcome Back!', message: 'Signed in successfully to ClipForge Studio.' });
-      navigate('/dashboard');
+      navigate('/');
     } catch (err) {
       showToast({ type: 'error', title: 'Sign In Failed', message: 'Invalid credentials provided.' });
     } finally {
@@ -36,7 +36,7 @@ export const LoginPage: React.FC = () => {
   const handleQuickDemo = () => {
     demoLogin('CREATOR');
     showToast({ type: 'ai', title: 'Demo Access Granted', message: 'Logged in as Demo Creator with pre-loaded projects.' });
-    navigate('/dashboard');
+    navigate('/');
   };
 
   return (
