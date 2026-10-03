@@ -107,7 +107,7 @@ export const LandingPage: React.FC = () => {
           {/* Hero CTAs */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
             <a
-              href="https://t.me/YOUR_BOT_USERNAME"
+              href="https://t.me/clipforge_rebels_bot"
               target="_blank" rel="noopener noreferrer"
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl font-extrabold text-base text-white bg-gradient-to-r from-crimson-600 via-crimson-500 to-rose-500 hover:from-crimson-500 hover:to-rose-400 active:scale-[0.98] shadow-lg shadow-crimson-900/40 hover:shadow-glow-crimson transition-all"
             >
@@ -402,7 +402,7 @@ export const LandingPage: React.FC = () => {
         </p>
         <div className="pt-2">
           <a
-            href="https://t.me/YOUR_BOT_USERNAME"
+            href="https://t.me/clipforge_rebels_bot"
             target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl font-extrabold text-base text-white bg-gradient-to-r from-crimson-600 to-rose-500 hover:from-crimson-500 hover:to-rose-400 shadow-glow-crimson transition-all"
           >
